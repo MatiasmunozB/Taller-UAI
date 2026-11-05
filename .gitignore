@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+.langgraph_api/
+.pytest_cache/
+*.py[cod]
+
+# Datos locales o generados (los fixtures compartidos de tests sí se versionan).
+/data/
+/local_data/
+/local-data/
+*.db
+*.sqlite
+*.sqlite3
+*.pickle
+*.pkl
