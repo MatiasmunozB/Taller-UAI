@@ -1,12 +1,14 @@
 """API HTTP para el agente router de ecommerce."""
 
+import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+import httpx
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -94,7 +96,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "salud", "description": "Estado y configuración de la API."},
         {"name": "chat", "description": "Clasificación y respuesta a mensajes de clientes."},
-        {"name": "telegram", "description": "Webhook de Telegram (en preparación)."},
+        {"name": "telegram", "description": "Webhook seguro para actualizaciones de Telegram."},
     ],
     lifespan=lifespan,
 )
@@ -189,5 +191,61 @@ async def chat(
     tags=["telegram"],
     include_in_schema=False,
 )
-async def telegram(payload: Any = Body(...)) -> dict[str, bool]:
+async def telegram(
+    request: Request,
+    payload: Any = Body(...),
+    telegram_secret: str | None = Header(
+        default=None,
+        alias="X-Telegram-Bot-Api-Secret-Token",
+    ),
+) -> dict[str, bool]:
+    expected_secret = os.getenv("TELEGRAM_SECRET", "")
+    if not expected_secret or not telegram_secret or not hmac.compare_digest(
+        telegram_secret, expected_secret
+    ):
+        raise HTTPException(status_code=403, detail="Secreto de Telegram inválido.")
+
+    if not isinstance(payload, dict):
+        return {"ok": True}
+
+    message = payload.get("message")
+    if not isinstance(message, dict):
+        return {"ok": True}
+
+    chat = message.get("chat")
+    chat_id = chat.get("id") if isinstance(chat, dict) else None
+    texto = message.get("text")
+    if chat_id is None or not isinstance(texto, str) or not texto.strip():
+        return {"ok": True}
+
+    try:
+        result = await run_in_threadpool(
+            request.app.state.router_graph.invoke,
+            {"mensaje": texto},
+            {"configurable": {"thread_id": str(chat_id)}},
+        )
+        logger.info("Telegram chat_id=%s ruta=%s", chat_id, result["ruta"])
+
+        bot_token = os.getenv("TELEGRAM_TOKEN", "")
+        if not bot_token:
+            raise RuntimeError("TELEGRAM_TOKEN no está configurado.")
+
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            response = await client.post(
+                f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                json={"chat_id": chat_id, "text": result["respuesta"]},
+            )
+            response.raise_for_status()
+            telegram_result = response.json()
+            if not telegram_result.get("ok"):
+                raise RuntimeError("Telegram sendMessage devolvió ok=false.")
+    except Exception as exc:
+        # Los mensajes de error HTTP pueden incluir el token en la URL: se redactan antes del log.
+        details = str(exc)
+        for secret_name in ("TELEGRAM_TOKEN", "TELEGRAM_SECRET", "GOOGLE_API_KEY"):
+            secret = os.getenv(secret_name, "")
+            if secret:
+                details = details.replace(secret, "[REDACTED]")
+        logger.error("Error procesando update de Telegram (%s): %s", type(exc).__name__, details)
+
     return {"ok": True}
