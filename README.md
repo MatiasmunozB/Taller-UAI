@@ -24,6 +24,7 @@ Variables disponibles:
 | Variable | Uso |
 | --- | --- |
 | `GOOGLE_API_KEY` | Clave para invocar Gemini; no la subas a GitHub. |
+| `API_KEY` | Clave que exige `POST /chat` en la cabecera `X-API-Key`. |
 | `MODELO` | Modelo de Gemini; por defecto `gemini-3.5-flash-lite`. |
 | `THREAD_ID` | ID opcional de conversación para el CLI. |
 | `TELEGRAM_TOKEN` | Token del bot, entregado por BotFather. |
@@ -54,10 +55,39 @@ La documentación interactiva está en <http://localhost:8000/docs>. Ejemplo par
 ```powershell
 curl.exe -X POST "http://localhost:8000/chat" `
   -H "Content-Type: application/json" `
+  -H "X-API-Key: TU_API_KEY" `
   -d '{"user_id":"cliente-123","texto":"¿tienen la polera azul en talla M?"}'
 ```
 
 La respuesta incluye `ruta`, `motivo` y `respuesta`. El `user_id` se utiliza como `thread_id` para conservar la memoria de conversación.
+
+## Clave de la API
+
+`POST /chat` exige la cabecera `X-API-Key` con el valor de la variable de entorno `API_KEY`. Si falta o no coincide, responde `401`. `/health` sigue abierto y `/telegram` se protege con su propio `TELEGRAM_SECRET`. Si el servidor no tiene `API_KEY` configurada, `/chat` rechaza todas las solicitudes.
+
+1. **Genera una clave** larga y aleatoria:
+
+   ```powershell
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+
+2. **En local**, agrégala a `.env` (nunca a `.env.example`):
+
+   ```
+   API_KEY=la-clave-generada
+   ```
+
+   Reinicia `uvicorn` para que la lea.
+
+3. **En Heroku**, configúrala en *Settings → Config Vars* o con:
+
+   ```powershell
+   heroku config:set API_KEY="la-clave-generada" -a $APP_NAME
+   ```
+
+   Heroku reinicia la app automáticamente al cambiar una Config Var.
+
+4. **Para probar desde Swagger**, abre `/docs`, pulsa *Authorize* (el candado), pega la clave y ejecuta `POST /chat`. En Bruno, define la variable secreta `apiKey` en el entorno (`local` o `heroku`).
 
 ## Correr las pruebas
 
@@ -66,7 +96,7 @@ python -m pytest -q
 python scripts/test_router.py
 ```
 
-Las pruebas del router leen `tests/casos_router.json` y requieren `GOOGLE_API_KEY` porque evalúan el modelo real. La suite parametrizada acepta al menos 13 aciertos de 15; el script muestra la tabla, el porcentaje y los casos fallidos. Cada evaluación puede realizar hasta 15 llamadas al modelo.
+`tests/test_api.py` comprueba que `/chat` responde `401` sin clave y `200` con clave; usa un grafo falso, así que no llama al modelo. Las pruebas del router leen `tests/casos_router.json` y requieren `GOOGLE_API_KEY` porque evalúan el modelo real. La suite parametrizada acepta al menos 13 aciertos de 15; el script muestra la tabla, el porcentaje y los casos fallidos. Cada evaluación puede realizar hasta 15 llamadas al modelo.
 
 ## Desplegar en Heroku
 
@@ -77,7 +107,7 @@ $APP_NAME = "ecommerce-router-tu-nombre"
 heroku login
 heroku create $APP_NAME
 heroku git:remote -a $APP_NAME
-heroku config:set GOOGLE_API_KEY="TU_GOOGLE_API_KEY" MODELO="gemini-3.5-flash-lite" -a $APP_NAME
+heroku config:set GOOGLE_API_KEY="TU_GOOGLE_API_KEY" API_KEY="TU_API_KEY" MODELO="gemini-3.5-flash-lite" -a $APP_NAME
 git push heroku main
 ```
 

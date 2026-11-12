@@ -3,13 +3,15 @@
 import hmac
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.router.graph import build_graph
@@ -17,6 +19,33 @@ from src.router.graph import build_graph
 load_dotenv()
 logger = logging.getLogger(__name__)
 MODELO = os.getenv("MODELO", "gemini-3.5-flash-lite")
+
+api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    description="Clave de la API definida en la variable de entorno API_KEY.",
+    auto_error=False,
+)
+
+
+def verificar_api_key(api_key: str | None = Depends(api_key_header)) -> None:
+    """Exige que la cabecera X-API-Key coincida con la variable de entorno API_KEY."""
+    esperada = os.getenv("API_KEY", "")
+    if not esperada:
+        logger.error("API_KEY no está configurada; /chat rechaza todas las solicitudes.")
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Falta la cabecera X-API-Key.",
+            headers={"WWW-Authenticate": "APIKey"},
+        )
+    if not esperada or not secrets.compare_digest(
+        api_key.encode("utf-8"), esperada.encode("utf-8")
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="La clave X-API-Key no es válida.",
+            headers={"WWW-Authenticate": "APIKey"},
+        )
 
 
 class HealthResponse(BaseModel):
@@ -122,8 +151,15 @@ async def health() -> HealthResponse:
         "Clasifica el mensaje como preventa, postventa o genérica y devuelve "
         "el motivo y la respuesta del agente correspondiente."
     ),
+    dependencies=[Depends(verificar_api_key)],
     responses={
         200: {"description": "El mensaje se clasificó y respondió correctamente."},
+        401: {
+            "description": "Falta la cabecera X-API-Key o la clave no es válida.",
+            "content": {
+                "application/json": {"example": {"detail": "La clave X-API-Key no es válida."}}
+            },
+        },
         422: {
             "description": "El body no cumple el esquema requerido; por ejemplo, falta texto.",
             "content": {
