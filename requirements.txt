@@ -1,4 +1,6 @@
 langgraph
+langgraph-checkpoint-postgres
+psycopg[binary,pool]
 langchain
 langchain-google-genai
 fastapi
@@ -6,4 +8,5 @@ uvicorn
 httpx
 pydantic
 python-dotenv
+truststore
 pytest

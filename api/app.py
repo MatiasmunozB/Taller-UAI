@@ -14,6 +14,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.memoria import abrir_memoria
 from src.router.graph import build_graph
 
 load_dotenv()
@@ -55,6 +56,13 @@ class HealthResponse(BaseModel):
     modelo: str = Field(
         description="Nombre del modelo configurado para clasificar mensajes.",
         examples=["gemini-3.5-flash-lite"],
+    )
+    memoria: Literal["ram", "postgres"] = Field(
+        description=(
+            "Dónde se guardan las conversaciones: 'postgres' sobrevive a reinicios; "
+            "'ram' se pierde al reiniciar el servidor."
+        ),
+        examples=["postgres"],
     )
 
 
@@ -110,9 +118,14 @@ class ChatResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Compila el grafo una sola vez para toda la vida de la aplicación."""
-    app.state.router_graph = build_graph()
-    yield
+    """Abre la memoria y compila el grafo una sola vez; cierra el pool al apagar."""
+    memoria = abrir_memoria()
+    app.state.memoria = memoria
+    app.state.router_graph = build_graph(checkpointer=memoria.checkpointer)
+    try:
+        yield
+    finally:
+        memoria.cerrar()
 
 
 app = FastAPI(
@@ -136,10 +149,13 @@ app = FastAPI(
     response_model=HealthResponse,
     tags=["salud"],
     summary="Comprobar el estado de la API",
-    description="Devuelve el estado del servicio y el nombre del modelo configurado.",
+    description=(
+        "Devuelve el estado del servicio, el modelo configurado y la memoria en uso "
+        "('ram' o 'postgres')."
+    ),
 )
-async def health() -> HealthResponse:
-    return HealthResponse(ok=True, modelo=MODELO)
+async def health(request: Request) -> HealthResponse:
+    return HealthResponse(ok=True, modelo=MODELO, memoria=request.app.state.memoria.tipo)
 
 
 @app.post(

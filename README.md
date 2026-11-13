@@ -25,6 +25,7 @@ Variables disponibles:
 | --- | --- |
 | `GOOGLE_API_KEY` | Clave para invocar Gemini; no la subas a GitHub. |
 | `API_KEY` | Clave que exige `POST /chat` en la cabecera `X-API-Key`. |
+| `DATABASE_URL` | Postgres donde se guarda la memoria de las conversaciones. Sin ella se usa RAM. |
 | `MODELO` | Modelo de Gemini; por defecto `gemini-3.5-flash-lite`. |
 | `THREAD_ID` | ID opcional de conversación para el CLI. |
 | `TELEGRAM_TOKEN` | Token del bot, entregado por BotFather. |
@@ -39,10 +40,39 @@ Con el entorno virtual activado y `GOOGLE_API_KEY` configurada:
 
 ```powershell
 python main.py router "¿tienen la polera azul en talla M?" --saltos
+python main.py router "me llamo Ana" --hilo prueba1
 python main.py router --diagrama
 ```
 
-`--saltos` muestra los nodos recorridos y el motivo; `--diagrama` imprime el Mermaid sin llamar al modelo.
+`--saltos` muestra los nodos recorridos y el motivo; `--hilo NOMBRE` elige el `thread_id` (repítelo para continuar la misma conversación); `--diagrama` imprime el Mermaid sin llamar al modelo ni a la base.
+
+## Memoria de las conversaciones
+
+El grafo guarda cada conversación por `thread_id` (en la API, el `user_id` de `/chat`; en Telegram, el `chat_id`).
+
+- **Con `DATABASE_URL`**, usa el checkpointer de Postgres de LangGraph (`PostgresSaver`): la memoria sobrevive a reinicios de Heroku y es la misma para la API y para `main.py`. Al arrancar crea sus tablas (`setup()`). Usa un pool de 1 a 2 conexiones por proceso, porque la base puede ser compartida, y comprueba cada conexión antes de usarla.
+- **Sin `DATABASE_URL`, o si Postgres no responde al arrancar**, usa RAM (`MemorySaver`), registra el motivo en el log y la API sigue funcionando. En RAM la memoria se pierde al reiniciar.
+
+`GET /health` indica cuál está en uso en el campo `memoria` (`"ram"` o `"postgres"`).
+
+En local, agrega la URL a `.env`:
+
+```
+DATABASE_URL=postgresql://usuario:clave@host:5432/nombre_base
+```
+
+En Heroku, configúrala en *Config Vars* (si agregas el add-on Heroku Postgres, la crea automáticamente):
+
+```powershell
+heroku config:set DATABASE_URL="postgresql://usuario:clave@host:5432/nombre_base" -a $APP_NAME
+```
+
+Para revisar lo guardado:
+
+```powershell
+python scripts/ver_memoria.py            # lista hilos, cantidad de checkpoints y fecha del último
+python scripts/ver_memoria.py prueba1    # mensajes de un hilo, en orden
+```
 
 ## Levantar la API
 
@@ -96,7 +126,7 @@ python -m pytest -q
 python scripts/test_router.py
 ```
 
-`tests/test_api.py` comprueba que `/chat` responde `401` sin clave y `200` con clave; usa un grafo falso, así que no llama al modelo. Las pruebas del router leen `tests/casos_router.json` y requieren `GOOGLE_API_KEY` porque evalúan el modelo real. La suite parametrizada acepta al menos 13 aciertos de 15; el script muestra la tabla, el porcentaje y los casos fallidos. Cada evaluación puede realizar hasta 15 llamadas al modelo.
+`tests/test_api.py` comprueba que `/chat` responde `401` sin clave y `200` con clave, que `/health` informa la memoria y que, si Postgres no responde, se usa RAM; usa un grafo falso y no toca la base ni el modelo. Las pruebas del router leen `tests/casos_router.json` y requieren `GOOGLE_API_KEY` porque evalúan el modelo real. La suite parametrizada acepta al menos 13 aciertos de 15; el script muestra la tabla, el porcentaje y los casos fallidos. Cada evaluación puede realizar hasta 15 llamadas al modelo.
 
 ## Desplegar en Heroku
 

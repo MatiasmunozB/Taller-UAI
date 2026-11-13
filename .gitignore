@@ -8,7 +8,8 @@ __pycache__/
 *.py[cod]
 
 # Datos locales o generados (los fixtures compartidos de tests sí se versionan).
-/data/
+/data/*
+!/data/tienda.md
 /local_data/
 /local-data/
 *.db
